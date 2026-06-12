@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "EMA Frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start", "--prefix", "frontend"],
+      "port": 4200,
+      "autoPort": false
+    },
+    {
+      "name": "Payment Analytics",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "frontend/public", "-p", "4201", "--no-clipboard"],
+      "port": 4201,
+      "autoPort": false
+    }
+  ]
+}

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; background: #F1F5F9; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 2px; }
+    .animate-pulse-dot { animation: pulseDot 1.5s ease-in-out infinite; }
+    @keyframes pulseDot { 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.5; transform:scale(1.4); } }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Plus Jakarta Sans', 'Inter', 'sans-serif'] }
+        }
+      }
+    };
+  </script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+/* ── SVG Sparkline ── */
+function Sparkline({ data, color, fill }) {
+  const w = 120, h = 40, pad = 2;
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const pts = data.map((v, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    return `${x},${y}`;
+  }).join(' ');
+  const areaClose = `${w - pad},${h} ${pad},${h}`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{height:40}}>
+      <defs>
+        <linearGradient id={`sg-${color.replace('#','')}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.2"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon points={`${pts} ${areaClose}`} fill={`url(#sg-${color.replace('#','')})`}/>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+/* ── SVG Bar Chart ── */
+const barData = [
+  { label: 'Initiated',    v: 65.2, k: '65.2K' },
+  { label: 'Authorized',   v: 58.4, k: '58.4K' },
+  { label: 'Successful',   v: 52.1, k: '52.1K' },
+  { label: 'Payouts',      v: 44.8, k: '44.8K' },
+  { label: 'Transactions', v: 38.3, k: '38.3K' },
+];
+function BarChart() {
+  const [hov, setHov] = useState(null);
+  const W=440, H=140, bw=52, gap=24, py=24, px=8;
+  const maxV = 70;
+  return (
+    <svg viewBox={`0 0 ${W} ${H+30}`} className="w-full" style={{height:170}}>
+      <defs>
+        {barData.map((_, i) => (
+          <linearGradient key={i} id={`bg${i}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#4F46E5" stopOpacity={1 - i*0.12}/>
+            <stop offset="100%" stopColor="#818CF8" stopOpacity={(1-i*0.12)*0.55}/>
+          </linearGradient>
+        ))}
+      </defs>
+      {barData.map((b, i) => {
+        const x = px + i * (bw + gap);
+        const bh = (b.v / maxV) * H;
+        const y = py + (H - bh);
+        return (
+          <g key={i} onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)} style={{cursor:'pointer'}}>
+            <rect x={x} y={y} width={bw} height={bh} rx="6" fill={`url(#bg${i})`}
+                  opacity={hov !== null && hov !== i ? 0.5 : 1}
+                  style={{transition:'opacity 0.15s'}}/>
+            <text x={x+bw/2} y={y-6} textAnchor="middle" fontSize="11" fill={hov===i?"#4F46E5":"#64748B"} fontWeight="600">{b.k}</text>
+            <text x={x+bw/2} y={H+py+14} textAnchor="middle" fontSize="10" fill="#94A3B8">{b.label.split(' ')[0]}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ── SVG Donut ── */
+const cardDist = [
+  { label:'Visa',       pct:54, color:'#4F46E5' },
+  { label:'Mastercard', pct:30, color:'#818CF8' },
+  { label:'Others',     pct:16, color:'#E0E7FF' },
+];
+function DonutChart() {
+  const [hov, setHov] = useState(null);
+  const cx=60, cy=60, R=48, r=30;
+  let angle = -Math.PI/2;
+  const segs = cardDist.map((d,i) => {
+    const a = (d.pct/100) * 2*Math.PI;
+    const x1=cx+R*Math.cos(angle), y1=cy+R*Math.sin(angle);
+    angle += a;
+    const x2=cx+R*Math.cos(angle), y2=cy+R*Math.sin(angle);
+    const xi1=cx+r*Math.cos(angle-a), yi1=cy+r*Math.sin(angle-a);
+    const xi2=cx+r*Math.cos(angle), yi2=cy+r*Math.sin(angle);
+    const large = a > Math.PI ? 1 : 0;
+    const path = `M${x1},${y1} A${R},${R} 0 ${large},1 ${x2},${y2} L${xi2},${yi2} A${r},${r} 0 ${large},0 ${xi1},${yi1} Z`;
+    return { ...d, path, i };
+  });
+  return (
+    <svg viewBox="0 0 120 120" className="w-24 h-24 shrink-0">
+      {segs.map(s => (
+        <path key={s.i} d={s.path} fill={s.color}
+              opacity={hov!==null&&hov!==s.i ? 0.5 : 1}
+              style={{transition:'opacity 0.15s', cursor:'pointer'}}
+              onMouseEnter={()=>setHov(s.i)} onMouseLeave={()=>setHov(null)}/>
+      ))}
+      <text x="60" y="56" textAnchor="middle" fontSize="14" fontWeight="700" fill="#0F172A">84%</text>
+      <text x="60" y="70" textAnchor="middle" fontSize="9" fill="#94A3B8">Digital</text>
+    </svg>
+  );
+}
+
+/* ── data ── */
+const sparkApproval = [82,85,84,87,88,89,88,90,91,90];
+const sparkDecline  = [18,15,16,13,12,11,12,10, 9,10];
+const sparkVolume   = [40,55,48,62,70,58,75,88,95,100];
+
+const customers = [
+  { name:'Emily Clarke',   role:'Enterprise', status:'Completed',  amt:'$4,200', av:'EC', bg:'bg-violet-100 text-violet-700' },
+  { name:'Marcus Johnson', role:'Business',   status:'Pending',    amt:'$1,850', av:'MJ', bg:'bg-sky-100 text-sky-700' },
+  { name:'Sophia Patel',   role:'Starter',    status:'In Process', amt:'$620',   av:'SP', bg:'bg-emerald-100 text-emerald-700' },
+  { name:'Oliver Nguyen',  role:'Enterprise', status:'Completed',  amt:'$8,900', av:'ON', bg:'bg-amber-100 text-amber-700' },
+  { name:'Ava Müller',     role:'Business',   status:'Completed',  amt:'$2,340', av:'AM', bg:'bg-pink-100 text-pink-700' },
+];
+const statusCls = {
+  'Completed':  'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200',
+  'Pending':    'bg-amber-50 text-amber-600 ring-1 ring-amber-200',
+  'In Process': 'bg-blue-50 text-blue-600 ring-1 ring-blue-200',
+};
+
+const navSections = [
+  { label:'Overview', items:[
+    {icon:'⊞', label:'Dashboard', active:true},
+    {icon:'⇅', label:'Transactions'},
+    {icon:'👤', label:'Customers'},
+    {icon:'◈', label:'Finance', sub:true},
+    {icon:'🏪', label:'Stores', sub:true},
+    {icon:'🔗', label:'Payment Links'},
+  ]},
+  {label:'Risk', items:[
+    {icon:'⚠', label:'Disputes'},
+    {icon:'🛡', label:'Fraud Prevention'},
+    {icon:'↩', label:'Decline Recovery'},
+    {icon:'⊕', label:'Routing'},
+  ]},
+  {label:'Billing', items:[
+    {icon:'🔄', label:'Subscriptions'},
+    {icon:'📄', label:'Invoices'},
+    {icon:'📋', label:'Plans'},
+    {icon:'📝', label:'Credit Notes'},
+    {icon:'📊', label:'Accounting'},
+  ]},
+];
+
+/* ── Icon Rail ── */
+function IconRail() {
+  const icons = ['⊞','◈','⬡','◎','⊕','◫'];
+  return (
+    <div className="flex flex-col items-center py-3 gap-1 shrink-0"
+         style={{width:48,background:'#1e1b4b',borderRight:'1px solid #312e81'}}>
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 shrink-0"
+           style={{background:'linear-gradient(135deg,#6366f1,#818cf8)'}}>
+        <span className="text-white text-sm font-bold leading-none">P</span>
+      </div>
+      {icons.map((ic,i)=>(
+        <button key={i}
+          className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs transition-all shrink-0
+            ${i===0?'text-white bg-white/15':'text-indigo-400 hover:text-white hover:bg-white/10'}`}>
+          {ic}
+        </button>
+      ))}
+      <div className="flex-1"/>
+      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+           style={{background:'linear-gradient(135deg,#7c3aed,#4f46e5)'}}>A</div>
+    </div>
+  );
+}
+
+/* ── Sidebar ── */
+function Sidebar({ open }) {
+  if (!open) return null;
+  return (
+    <div className="flex flex-col shrink-0 bg-white overflow-y-auto"
+         style={{width:220,borderRight:'1px solid #F1F5F9'}}>
+      {/* profile */}
+      <div className="p-3 border-b border-gray-100">
+        <button className="flex items-center gap-2 w-full p-2 rounded-xl hover:bg-gray-50 transition">
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+               style={{background:'linear-gradient(135deg,#6366f1,#7c3aed)'}}>AJ</div>
+          <div className="flex-1 min-w-0 text-left">
+            <div className="text-xs font-semibold text-gray-800 truncate">Alex Johnson</div>
+            <div className="text-xs text-gray-400">Admin</div>
+          </div>
+          <span className="text-gray-400 text-xs">⌄</span>
+        </button>
+        <div className="relative mt-2">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">🔍</span>
+          <input placeholder="Search..."
+            className="w-full pl-7 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50" />
+        </div>
+      </div>
+      {/* nav */}
+      <div className="flex-1 px-2 py-2 overflow-y-auto">
+        {navSections.map(sec=>(
+          <div key={sec.label} className="mb-1">
+            <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{sec.label}</div>
+            {sec.items.map(it=>(
+              <button key={it.label}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all mb-0.5
+                  ${it.active
+                    ? 'text-white shadow-sm'
+                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'}`}
+                style={it.active?{background:'linear-gradient(135deg,#4F46E5,#818CF8)'}:{}}>
+                <span className="w-4 text-center shrink-0">{it.icon}</span>
+                <span className="flex-1 text-left">{it.label}</span>
+                {it.sub && <span className={`text-xs ${it.active?'text-indigo-200':'text-gray-400'}`}>›</span>}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+      {/* upgrade */}
+      <div className="p-3 border-t border-gray-100">
+        <div className="rounded-xl p-3" style={{background:'linear-gradient(135deg,#EEF2FF,#F5F3FF)'}}>
+          <div className="text-xs font-semibold text-indigo-700 mb-0.5">Upgrade to Pro</div>
+          <div className="text-xs text-indigo-500 mb-2">Unlock AI insights & advanced analytics</div>
+          <button className="w-full py-1.5 rounded-lg text-xs font-semibold text-white"
+                  style={{background:'linear-gradient(135deg,#4F46E5,#818CF8)'}}>Upgrade Now</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Top Bar ── */
+function TopBar({ sidebarOpen, setSidebarOpen }) {
+  return (
+    <div className="flex items-center justify-between px-5 py-3 bg-white shrink-0"
+         style={{borderBottom:'1px solid #F1F5F9',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+      <div className="flex items-center gap-3">
+        <button onClick={()=>setSidebarOpen(o=>!o)}
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition text-base">
+          ☰
+        </button>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">🔍</span>
+          <input placeholder="Search anything..."
+            className="pl-9 pr-14 py-2 text-sm bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50 transition"
+            style={{width:240}}/>
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-mono bg-gray-200 px-1.5 py-0.5 rounded">⌘F</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-xl transition hover:opacity-90"
+                style={{background:'linear-gradient(135deg,#4F46E5,#818CF8)',boxShadow:'0 4px 14px rgba(79,70,229,0.28)'}}>
+          <span className="font-bold">+</span> New Project
+        </button>
+        <button className="relative w-9 h-9 flex items-center justify-center rounded-xl border border-gray-200 hover:bg-gray-50 transition text-gray-500">
+          🔔
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+        </button>
+        <button className="w-9 h-9 flex items-center justify-center rounded-xl border border-gray-200 hover:bg-gray-50 transition text-gray-500 text-sm">🌙</button>
+        <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 transition text-sm text-gray-600 font-medium">
+          🌐 EN <span className="text-gray-400 text-xs">⌄</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Stat Card ── */
+function StatCard({ title, value, change, up, data, color }) {
+  return (
+    <div className="bg-white rounded-2xl p-5 flex flex-col gap-3"
+         style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">{title}</div>
+          <div className="text-2xl font-bold text-gray-900">{value}</div>
+        </div>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full mt-1 ${up?'bg-emerald-50 text-emerald-600':'bg-red-50 text-red-500'}`}>
+          {up?'▲':'▼'} {change}
+        </span>
+      </div>
+      <Sparkline data={data} color={color} />
+    </div>
+  );
+}
+
+/* ── Main App ── */
+function App() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aiDismissed, setAiDismissed] = useState(false);
+
+  return (
+    <div className="flex h-screen overflow-hidden" style={{fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+      <IconRail />
+      <Sidebar open={sidebarOpen} />
+
+      {/* main column */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <TopBar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+
+        {/* content */}
+        <div className="flex-1 overflow-y-auto px-6 py-5" style={{background:'#F8FAFC'}}>
+
+          {/* breadcrumb */}
+          <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-4">
+            <span className="hover:text-indigo-600 cursor-pointer">Dashboard</span>
+            <span>›</span>
+            <span className="text-gray-700 font-semibold">Analytics</span>
+          </div>
+
+          {/* heading */}
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900" style={{letterSpacing:'-0.5px'}}>Payment Analytics</h1>
+              <p className="text-sm text-gray-400 mt-0.5">Track your revenue, volume and customer trends</p>
+            </div>
+            <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition"
+                    style={{boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
+              📅 This week <span className="text-gray-400">⌄</span>
+            </button>
+          </div>
+
+          {/* ── stat cards ── */}
+          <div className="grid grid-cols-3 gap-4 mb-5">
+            <StatCard title="Approval Rate" value="90.1%" change="2.4%"   up={true}  data={sparkApproval} color="#4F46E5"/>
+            <StatCard title="Decline Rate"  value="9.9%"  change="1.05%"  up={false} data={sparkDecline}  color="#EF4444"/>
+            <StatCard title="Gross Volume"  value="$1.24M" change="95.32%" up={true}  data={sparkVolume}   color="#10B981"/>
+          </div>
+
+          {/* ── mid row ── */}
+          <div className="grid gap-4 mb-5" style={{gridTemplateColumns:'1fr 320px'}}>
+
+            {/* Total Revenue */}
+            <div className="bg-white rounded-2xl p-5"
+                 style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Total Revenue</div>
+                  <div className="flex items-baseline gap-3 flex-wrap">
+                    <span className="text-3xl font-bold text-gray-900" style={{letterSpacing:'-1px'}}>$20,422.00</span>
+                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                      ▲ +10.32% <span className="font-normal text-emerald-500 ml-0.5">from last period</span>
+                    </span>
+                  </div>
+                </div>
+                <button className="text-xs text-indigo-600 font-semibold hover:underline whitespace-nowrap mt-1">View Report →</button>
+              </div>
+
+              <BarChart />
+
+              {!aiDismissed && (
+                <div className="mt-4 flex items-start justify-between rounded-xl px-4 py-3"
+                     style={{background:'linear-gradient(135deg,#EEF2FF,#F5F3FF)',border:'1px solid #C7D2FE'}}>
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs mt-0.5 shrink-0"
+                         style={{background:'linear-gradient(135deg,#4F46E5,#818CF8)'}}>✦</div>
+                    <div>
+                      <span className="text-xs font-semibold text-indigo-700">AI Suggestion · </span>
+                      <span className="text-xs text-indigo-600">Authorized payments are 10.5% lower than last week. Consider reviewing decline reasons to improve conversion.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 ml-3 shrink-0">
+                    {['Optimize','Analyze'].map(l=>(
+                      <button key={l} className="text-xs font-semibold text-indigo-600 bg-white border border-indigo-200 rounded-lg px-3 py-1 hover:bg-indigo-600 hover:text-white transition">{l}</button>
+                    ))}
+                    <button onClick={()=>setAiDismissed(true)} className="text-gray-400 hover:text-gray-600 ml-1 text-sm">✕</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Top Customers */}
+            <div className="bg-white rounded-2xl p-5 flex flex-col"
+                 style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm font-bold text-gray-900">Top Customers</div>
+                <button className="text-xs font-semibold text-indigo-600 hover:underline">See all →</button>
+              </div>
+              <div className="flex flex-col gap-3 flex-1">
+                {customers.map((c,i)=>(
+                  <div key={i} className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${c.bg}`}>{c.av}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-gray-800 truncate">{c.name}</div>
+                      <div className="text-xs text-gray-400">{c.role}</div>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5 shrink-0">
+                      <span className={`text-xs px-1.5 py-0.5 rounded-md font-semibold ${statusCls[c.status]}`}>{c.status}</span>
+                      <span className="text-xs font-bold text-gray-700">{c.amt}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── AI Insights ── */}
+          <div className="bg-white rounded-2xl p-5 mb-5"
+               style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-base shrink-0"
+                   style={{background:'linear-gradient(135deg,#4F46E5,#7C3AED)'}}>✦</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-sm font-bold text-gray-900">AI Insights &amp; Daily Report</span>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-red-500 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
+                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse-dot inline-block"></span> Live Report
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Revenue is up 10.32% vs last period. Top channel is Card Payments (84% of gross volume). Dispute rate decreased 0.3% — excellent fraud prevention performance this week.
+                  <a href="#" className="text-indigo-600 font-semibold ml-1 hover:underline">Read full report →</a>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ── bottom row ── */}
+          <div className="grid grid-cols-4 gap-4">
+
+            {/* Transactions */}
+            <div className="bg-white rounded-2xl p-5"
+                 style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm font-bold text-gray-900">Transactions</div>
+                <span className="text-xs font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">203</span>
+              </div>
+              {[
+                {label:'Card',   pct:54, color:'#4F46E5'},
+                {label:'Bank',   pct:28, color:'#818CF8'},
+                {label:'Wallet', pct:12, color:'#C4B5FD'},
+                {label:'Other',  pct:6,  color:'#E0E7FF'},
+              ].map(t=>(
+                <div key={t.label} className="mb-3">
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>{t.label}</span><span className="font-semibold text-gray-700">{t.pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all" style={{width:`${t.pct}%`,background:t.color}}></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Card Distribution */}
+            <div className="bg-white rounded-2xl p-5"
+                 style={{border:'1px solid #F1F5F9',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+              <div className="text-sm font-bold text-gray-900 mb-3">Card Distribution</div>
+              <div className="flex items-center gap-3">
+                <DonutChart />
+                <div className="flex flex-col gap-2 flex-1">
+                  {cardDist.map(c=>(
+                    <div key={c.label} className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{background:c.color}}></span>
+                      <span className="flex-1">{c.label}</span>
+                      <span className="font-bold text-gray-700">{c.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Card 1 — teal-cyan */}
+            <div className="rounded-2xl p-5 text-white flex flex-col justify-between"
+                 style={{background:'linear-gradient(135deg,#059669 0%,#0891b2 100%)',minHeight:170}}>
+              <div>
+                <div className="text-xs font-semibold opacity-70 uppercase tracking-wider mb-1">Total Payouts</div>
+                <div className="text-2xl font-bold mt-1" style={{letterSpacing:'-0.5px'}}>$10,630.80</div>
+                <div className="text-xs opacity-60 mt-1">↑ 8.4% vs last week</div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs opacity-60 mb-1">
+                  <span>203 transactions</span><span>💳</span>
+                </div>
+                <div className="h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-white/60 rounded-full" style={{width:'68%'}}></div>
+                </div>
+                <div className="flex justify-between text-xs opacity-50 mt-1">
+                  <span>68% of target</span><span>$15.6K goal</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2 — purple-blue */}
+            <div className="rounded-2xl p-5 text-white flex flex-col justify-between"
+                 style={{background:'linear-gradient(135deg,#7C3AED 0%,#2563EB 100%)',minHeight:170}}>
+              <div>
+                <div className="text-xs font-semibold opacity-70 uppercase tracking-wider mb-1">Pending Settlements</div>
+                <div className="text-2xl font-bold mt-1" style={{letterSpacing:'-0.5px'}}>$3,220.80</div>
+                <div className="text-xs opacity-60 mt-1">↓ 2.1% vs last week</div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs opacity-60 mb-1">
+                  <span>47 pending</span><span>⏳</span>
+                </div>
+                <div className="h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div className="h-full bg-white/60 rounded-full" style={{width:'32%'}}></div>
+                </div>
+                <div className="flex justify-between text-xs opacity-50 mt-1">
+                  <span>32% settled</span><span>Est. 2 days</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div className="h-8"/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
